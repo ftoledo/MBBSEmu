@@ -7322,45 +7322,6 @@ namespace MBBSEmu.HostProcess.ExportedModules
         }
 
         /// <summary>
-        ///     return user
-        ///
-        ///     Signature: int cncuid (char *uid);
-        /// </summary>
-        private void cncuid()
-        {
-
-    //gets the next word from the input string
-    cncwrd(); 
-
-    //cncwrd() saves the result to "CNCWRD" variable, null terminated
-    var username = Module.Memory.GetString("CNCWRD");
-
-    //cncuid output variable
-    var returnPointer = Module.Memory.GetOrAllocateVariablePointer("CNCUID", 0x1E);
-    Module.Memory.SetArray("CNCUID", username);
-
-    //Clear out CNCWRD just to be safe
-    Module.Memory.SetByte("CNCWRD", 0);
-
-    //cast the username we retrieved to a string
-    //we use c# ranges to get every byte in the array except the last (null)
-    var usernameString = Encoding.ASCII.GetString(username);
-
-    _logger.Debug($"USUARIO: {usernameString}");
-
-    //see if the user doesn't exist in the Account Repository
-    if(_accountRepository.GetAccountByUsername(usernameString) == null)
-    {
-        //User doesn't exist, so set CNCUID result as a null string
-        Module.Memory.SetByte("CNCUID", 0);
-    }
-
-    //Sets DX:AX registers to the pointer
-    Registers.SetPointer(returnPointer);
-
-        }
-
-        /// <summary>
         ///     Create a new key record
         ///
         ///     Signature: void nkyrec (char *uid);
