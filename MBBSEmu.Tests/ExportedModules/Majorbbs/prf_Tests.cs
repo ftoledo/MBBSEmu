@@ -70,6 +70,5 @@ namespace MBBSEmu.Tests.ExportedModules.Majorbbs
             mbbsEmuMemoryCore.SetPointer("PRFPTR", mbbsEmuMemoryCore.GetVariablePointer("PRFBUF"));
             mbbsEmuMemoryCore.SetZero(mbbsEmuMemoryCore.GetVariablePointer("PRFBUF"), 0x4000);
         }
-
     }
 }

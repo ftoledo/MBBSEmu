@@ -162,11 +162,21 @@ namespace MBBSEmu.Module
             }
             else
             {
+                //Verify Module Path Exists
+                if (!Directory.Exists(ModulePath))
+                {
+                    _logger.Error($"Unable to find the specified directory for the module {ModuleIdentifier.ToUpper()}: {ModulePath}");
+                    _logger.Error("Please verify your Command Line Argument or the path specified in your Module JSON File and try again.");
+                    throw new DirectoryNotFoundException($"Unable to locate {ModulePath}");
+                }
+
                 //Verify MDF File Exists
                 var mdfFile = fileUtility.FindFile(ModulePath, $"{ModuleIdentifier}.MDF");
                 var fullMdfFilePath = Path.Combine(ModulePath, mdfFile);
                 if (!File.Exists(fullMdfFilePath))
                 {
+                    _logger.Error($"Unable to locate {fullMdfFilePath}");
+                    _logger.Error($"Please verify your Command Line Argument or the Module JSON File to ensure {ModuleIdentifier} is the correct Module Identifier and that the Module is installed properly.");
                     throw new FileNotFoundException($"Unable to locate Module: {fullMdfFilePath}");
                 }
                 Mdf = new MdfFile(fullMdfFilePath);
@@ -300,13 +310,13 @@ namespace MBBSEmu.Module
         private void LoadModuleDll(string dllToLoad)
         {
             var requiredDll = new MbbsDll(_fileUtility, _logger);
-            if (!requiredDll.Load(dllToLoad, ModulePath))
+            if (!requiredDll.Load(dllToLoad, ModulePath, ModuleConfig.Patches?.Where(x => x.AbsoluteOffset > 0).ToList()))
             {
                 _logger.Error($"Unable to load {dllToLoad}");
                 return;
             }
 
-            requiredDll.SegmentOffset = (ushort)(ModuleDlls.Sum(x => x.File.SegmentTable.Count) + 1);
+            requiredDll.SegmentOffset = (ushort)ModuleDlls.Sum(x => x.File.SegmentTable.Count);
             ModuleDlls.Add(requiredDll);
 
             _logger.Info($"Loaded {dllToLoad}");

@@ -4,6 +4,7 @@ using MBBSEmu.Date;
 using MBBSEmu.Disassembler.Artifacts;
 using MBBSEmu.DOS;
 using MBBSEmu.Extensions;
+using MBBSEmu.HostProcess.Enums;
 using MBBSEmu.HostProcess.ExportedModules;
 using MBBSEmu.HostProcess.GlobalRoutines;
 using MBBSEmu.HostProcess.HostRoutines;
@@ -187,7 +188,7 @@ namespace MBBSEmu.HostProcess
                 AddModule(new MbbsModule(_fileUtility, Clock, Logger, m));
 
             //Remove any modules that did not properly initialize
-            foreach (var (_, value) in _modules.Where(m => m.Value.MainModuleDll.EntryPoints.Count == 1 && m.Value.ModuleConfig.ModuleEnabled))
+            foreach (var (_, value) in _modules.Where(m => m.Value.MainModuleDll.EntryPoints.Count == 1 && (bool)m.Value.ModuleConfig.ModuleEnabled))
             {
                 Logger.Error($"{value.ModuleIdentifier} not properly initialized, Removing");
                 moduleConfigurations.RemoveAll(x => x.ModuleIdentifier == value.ModuleIdentifier);
@@ -276,7 +277,7 @@ namespace MBBSEmu.HostProcess
                         ProcessIncomingCharacter(session);
 
                     //Global Command Handler
-                    if (session.GetStatus() == 3 && DoGlobalsAttribute.Get(session.SessionState))
+                    if (session.GetStatus() == EnumUserStatus.CR_TERMINATED_STRING_AVAILABLE && DoGlobalsAttribute.Get(session.SessionState))
                     {
                         //Transfer Input Buffer to Command Buffer, but don't clear it
                         session.InputBuffer.WriteByte(0x0);
@@ -286,7 +287,7 @@ namespace MBBSEmu.HostProcess
                         if (_globalRoutines.Any(g =>
                             g.ProcessCommand(session.InputCommand, session.Channel, _channelDictionary, _modules)))
                         {
-                            session.Status.Enqueue(1);
+                            session.Status.Enqueue(EnumUserStatus.RINGING);
                             session.InputBuffer.SetLength(0);
 
                             //Redisplay Main Menu prompt after global if session is at Main Menu
@@ -340,14 +341,14 @@ namespace MBBSEmu.HostProcess
                         case EnumSessionState.InModule:
                             {
                                 //Did BTUCHI or a previous command cause a status change?
-                                if (session.GetStatus() == 240 || session.GetStatus() == 5)
+                                if (session.GetStatus() == EnumUserStatus.CYCLE || session.GetStatus() == EnumUserStatus.OUTPUT_BUFFER_EMPTY)
                                 {
                                     ProcessSTSROU(session);
                                     break;
                                 }
 
                                 //User Input Available? Invoke *STTROU
-                                if (session.GetStatus() == 3)
+                                if (session.GetStatus() == EnumUserStatus.CR_TERMINATED_STRING_AVAILABLE)
                                 {
                                     ProcessSTTROU(session);
                                 }
@@ -355,11 +356,9 @@ namespace MBBSEmu.HostProcess
                                 //If the channel has been registered with BEGIN_POLLING
                                 if (session.PollingRoutine != null)
                                 {
+                                    session.Status.Enqueue(EnumUserStatus.POLLING_STATUS);
                                     ProcessPollingRoutine(session);
-
-                                    //Keep the user in Polling Status if the polling routine is still there
-                                    if (session.PollingRoutine != FarPtr.Empty)
-                                        session.Status.Enqueue(192);
+                                    session.Status.Dequeue();
                                 }
 
                                 break;
@@ -426,7 +425,7 @@ namespace MBBSEmu.HostProcess
 
         private void CallModuleRoutine(string routine, Action<MbbsModule> preRunCallback, ushort channel = ushort.MaxValue)
         {
-            foreach (var m in _modules.Values.Where(x => x.ModuleConfig.ModuleEnabled))
+            foreach (var m in _modules.Values.Where(x => (bool)x.ModuleConfig.ModuleEnabled))
             {
                 if (!m.MainModuleDll.EntryPoints.TryGetValue(routine, out var routineEntryPoint)) continue;
 
@@ -498,10 +497,10 @@ namespace MBBSEmu.HostProcess
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void ProcessSTTROU_EnteringModule(SessionBase session)
         {
-            if (session.GetStatus() != 3)
+            if (session.GetStatus() != EnumUserStatus.CR_TERMINATED_STRING_AVAILABLE)
             {
                 session.Status.Clear();
-                session.Status.Enqueue(3);
+                session.Status.Enqueue(EnumUserStatus.CR_TERMINATED_STRING_AVAILABLE);
             }
 
             session.SessionState = EnumSessionState.InModule;
@@ -662,7 +661,7 @@ namespace MBBSEmu.HostProcess
             if (session.CharacterProcessed == 0xD)
             {
                 session.Status.Clear();
-                session.Status.Enqueue(3);
+                session.Status.Enqueue(EnumUserStatus.CR_TERMINATED_STRING_AVAILABLE);
             }
 
             return result;
@@ -706,10 +705,10 @@ namespace MBBSEmu.HostProcess
         private void ProcessRTKICK()
         {
             //Check for any rtkick routines
-            foreach (var module in _modules.Values.Where(m => m.ModuleConfig.ModuleEnabled))
+            foreach (var module in _modules.Values.Where(m => (bool)m.ModuleConfig.ModuleEnabled))
             {
                 if (module.RtkickRoutines.Count == 0) continue;
-                
+
                 foreach (var (key, value) in module.RtkickRoutines.ToList())
                 {
                     if (!value.Executed && value.Elapsed.ElapsedMilliseconds > value.Delay * 1000)
@@ -743,7 +742,7 @@ namespace MBBSEmu.HostProcess
             //Too soon? Bail.
             if (_realTimeStopwatch.ElapsedMilliseconds <= 55) return;
 
-            foreach (var m in _modules.Values.Where(m => m.ModuleConfig.ModuleEnabled))
+            foreach (var m in _modules.Values.Where(m => (bool)m.ModuleConfig.ModuleEnabled))
             {
                 if (m.RtihdlrRoutines.Count == 0) continue;
 
@@ -761,7 +760,7 @@ namespace MBBSEmu.HostProcess
         /// </summary>
         private void ProcessSYSCYC()
         {
-            foreach (var m in _modules.Values.Where(m => m.ModuleConfig.ModuleEnabled))
+            foreach (var m in _modules.Values.Where(m => (bool)m.ModuleConfig.ModuleEnabled))
             {
                 var syscycPointer = m.Memory.GetPointer(m.Memory.GetVariablePointer("SYSCYC"));
                 if (syscycPointer == FarPtr.Empty) continue;
@@ -780,7 +779,7 @@ namespace MBBSEmu.HostProcess
         private void ProcessTasks()
         {
             //Run task routines
-            foreach (var m in _modules.Values.Where(m => m.ModuleConfig.ModuleEnabled))
+            foreach (var m in _modules.Values.Where(m => (bool)m.ModuleConfig.ModuleEnabled))
             {
                 if (m.TaskRoutines.Count == 0) continue;
 
@@ -809,7 +808,7 @@ namespace MBBSEmu.HostProcess
             //Quick Exit
             if (session.CharacterInterceptor == null)
                 return true;
-                
+
             //Invoke BTUCHI registered routine if one exists
             if (session.DataToProcess)
             {
@@ -822,7 +821,7 @@ namespace MBBSEmu.HostProcess
                 ProcessEchoEmptyInvoke(session);
                 return true;
             }
-            
+
             return true;
         }
 
@@ -851,27 +850,31 @@ namespace MBBSEmu.HostProcess
                     }
 
                 //Enter or Return
-                case 0xD when !session.TransparentMode && (session.SessionState != EnumSessionState.InFullScreenDisplay && session.SessionState != EnumSessionState.InFullScreenEditor):
+                case 0xD when (session.SessionState != EnumSessionState.InFullScreenDisplay && session.SessionState != EnumSessionState.InFullScreenEditor):
                     {
                         //If we're in transparent mode or BTUCHI has changed the character to null, don't echo
                         if (!session.TransparentMode && session.CharacterProcessed > 0)
                             session.SendToClient(new byte[] { 0xD, 0xA });
 
-                        //If there's no status in the queue, we can bail here
-                        if (session.Status.Count == 0)
+                        //If BTUCHI Injected a deferred Execution Status, respect that vs. processing the input
+                        if (session.GetStatus() == EnumUserStatus.CYCLE)
                         {
-                            session.Status.Enqueue(3);
+                            //If we're cycling, ignore \r for triggering STTROU and add it to the input buffer for STSROU to handle
+                            if (session.TransparentMode)
+                            {
+                                session.InputBuffer.WriteByte(session.CharacterProcessed);
+                                break;
+                            }
+
+                            //Set Status == 3, which means there is a Command Ready
+                            session.Status.Clear(); //Clear the 240
+                            session.Status.Enqueue(EnumUserStatus.CR_TERMINATED_STRING_AVAILABLE); //Enqueue Status of 3
+                            session.EchoSecureEnabled = false;
                             break;
                         }
 
-                        //If BTUCHI Injected a deferred Execution Status, respect that vs. processing the input
-                        if (session.GetStatus() == 240)
-                        {
-                            //Set Status == 3, which means there is a Command Ready
-                            session.Status.Clear(); //Clear the 240
-                            session.Status.Enqueue(3); //Enqueue Status of 3
-                            session.EchoSecureEnabled = false;
-                        }
+                        //Always Enqueue Input Ready
+                        session.Status.Enqueue(EnumUserStatus.CR_TERMINATED_STRING_AVAILABLE);
 
                         break;
                     }
@@ -893,8 +896,8 @@ namespace MBBSEmu.HostProcess
                             if (session.TransparentMode)
                                 break;
 
-                            if (session.Status.Count == 0 || session.GetStatus() == 0 || session.GetStatus() == 1 ||
-                               session.GetStatus() == 192)
+                            if (session.Status.Count == 0 || session.GetStatus() == EnumUserStatus.UNUSED || session.GetStatus() == EnumUserStatus.RINGING ||
+                               session.GetStatus() == EnumUserStatus.POLLING_STATUS)
                             {
 
                                 {

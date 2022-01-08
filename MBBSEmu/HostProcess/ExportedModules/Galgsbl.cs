@@ -1,6 +1,7 @@
 using MBBSEmu.CPU;
 using MBBSEmu.Date;
 using MBBSEmu.IO;
+using MBBSEmu.HostProcess.Enums;
 using MBBSEmu.Memory;
 using MBBSEmu.Module;
 using MBBSEmu.Server;
@@ -311,7 +312,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
         public void btuinj()
         {
             var channelNumber = GetParameter(0);
-            var status = GetParameter(1);
+            var status = (EnumUserStatus) GetParameter(1);
 
             if (!ChannelDictionary.TryGetValue(channelNumber, out var channel))
             {
@@ -322,11 +323,10 @@ namespace MBBSEmu.HostProcess.ExportedModules
             //Status Change
             //Set the Memory Value
             channel.Status.Enqueue(status);
-            Module.Memory.SetWord(Module.Memory.GetVariablePointer("STATUS"), status);
-            
+            Module.Memory.SetWord(Module.Memory.GetVariablePointer("STATUS"), (ushort) status);
 
 #if DEBUG
-            _logger.Debug($"Injecting Stauts {status} on channel {channelNumber}");
+            _logger.Debug($"Injecting Status {status} on channel {channelNumber}");
 #endif
 
             Registers.AX = 0;
@@ -680,16 +680,24 @@ namespace MBBSEmu.HostProcess.ExportedModules
         }
 
         /// <summary>
-        ///     Sets Screen Width (ignored)
+        ///     Sets Screen Width, controls word breaking
         /// </summary>
         private void btutsw()
         {
-            var channel = GetParameter(0);
+            var channelNumber = GetParameter(0);
             var width = GetParameter(1);
 
+            if (!ChannelDictionary.TryGetValue(channelNumber, out var channel))
+            {
+                Registers.AX = ERROR_CHANNEL_NOT_DEFINED;
+                return;
+            }
+
 #if DEBUG
-            _logger.Warn($"Set Screen Width for Channel {channel} to {width}");
+            _logger.Warn($"Set Screen Width for Channel {channelNumber} to {width}");
 #endif
+            channel.WordWrapWidth = width;
+
             Registers.AX = 0;
         }
 
@@ -773,9 +781,9 @@ namespace MBBSEmu.HostProcess.ExportedModules
                 return;
             }
 
-            if (channel.DataToProcess && channel.GetStatus() == 3)
+            if (channel.DataToProcess && channel.GetStatus() == EnumUserStatus.CR_TERMINATED_STRING_AVAILABLE)
             {
-                Registers.AX = 3;
+                Registers.AX = (ushort) EnumUserStatus.CR_TERMINATED_STRING_AVAILABLE;
             }
             else
             {
@@ -903,7 +911,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
         private void chiinj()
         {
             var channel = GetParameter(0);
-            var status = GetParameter(1);
+            var status = (EnumUserStatus) GetParameter(1);
 
             ChannelDictionary[channel].Status.Enqueue(status);
 
